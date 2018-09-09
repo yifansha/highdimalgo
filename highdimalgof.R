@@ -15,7 +15,7 @@ datapr<-function(type,seed,order,beta){
     result<-exp(beta*apply(data[,f.active], 1, prod))
     data<-data.frame(result,data)
     names(data)[1]<-c("y")
-    formula<-y~.
+    formula<<-y~.
     data<-data
   }
 }
@@ -45,35 +45,30 @@ bd.kink<-function(data,sim.int){
   quantile(order,probs=0.5)
 }
 
-wt.itr<-function(i,data){
-  sim.intcopy<<-sim.int1
-  k<-bd.kink(data,sim.intcopy)
-  diag(sim.intcopy)<-NA
-  wt<-apply(sim.intcopy,1,function(x) mean(sort(x)[1:k],na.rm=TRUE))
-  wt<<-wt*diag(sim.int1)
-  idx<-match(colnames(data[,-1]),names(wt))
-  wt<-wt[idx]
-  sim.out<-rfsrc(formula,data,predictorWt=log(1/wt),statistics=TRUE)
-  sim.int1<-find.interaction(sim.out,method="maxsubtree")
+wt.itr<-function(i,data,m){
+  if (i==1){
+    sim.int1<-m
+    sim.int1<<-sim.int1
+  }
+  else {
+    sim.intcopy<<-sim.int1
+    k<-bd.kink(data,sim.intcopy)
+    diag(sim.intcopy)<-NA
+    wt<-apply(sim.intcopy,1,function(x) mean(sort(x)[1:k],na.rm=TRUE))
+    wt<<-wt*diag(sim.int1)
+    idx<-match(colnames(data[,-1]),names(wt))
+    wt<-wt[idx]
+    sim.out<-rfsrc(formula,data,predictorWt=log(1/wt),statistics=TRUE)
+    sim.int1<<-find.interaction(sim.out,method="maxsubtree")
+  }
+  list(sim.int1)
 }
 
-md.varsel<-function(formula,data,wts){
-  sim.out<-rfsrc(formula,data,predictorWt=wts)
-  sim.int<-find.interaction(sim.out,method="maxsubtree")
-  sim.int1<-sim.int
-  j<-seq(5)
-  mt.list<-lapply(j,wt.itr,data=data)
-  ##var selection
-  sim.intcopy<-mt.list[[5]]
-  diag(sim.intcopy)<-NA
-  perrow<-apply(sim.intcopy,1,function(x) mean(x,na.rm=TRUE))
-  thsd<-quantile(perrow,probs=0.1)
-  print(sort(perrow,decreasing=FALSE))
-  var.imp<-which(perrow<=thsd)
-  idx<-match(names(var.imp),colnames(data[,-1]))
+ett<-function(t,data){
+  sapply(seq(5),wt.itr,data=data,m=t)
 }
 
-var.sel<-function(x,wts,data){
+init.gen<-function(x,wts,data){
   if (any(wts>0)) {
     var.pt<-unique(resample(var.columns,mvars,replace=FALSE,prob=wts))
   }
@@ -82,16 +77,41 @@ var.sel<-function(x,wts,data){
   }
   data1<-data[,c(1,var.pt)]
   wts1<-wts[var.pt]
-  match(names(data1[,md.varsel(formula,data1,wts1)+1]),names(data[,-1]))
+  sim.out<-rfsrc(formula,data1,predictorWt=wts1)
+  sim.int<-find.interaction(sim.out,method="maxsubtree")
+  sim.int1<-sim.int
+  list(data1,sim.int1)
+}
+
+md.varsel<-function(mt,data){
+  sim.intcopy<-mt
+  diag(sim.intcopy)<-NA
+  perrow<-apply(sim.intcopy,1,function(x) mean(x,na.rm=TRUE))
+  thsd<-quantile(perrow,probs=0.1)
+  print(sort(perrow,decreasing=FALSE))
+  var.imp<-which(perrow<=thsd)
+  idx<-match(names(var.imp),colnames(data[,-1]))
+}
+
+var.sel<-function(data,wts){
+  init<-lapply(seq(nrep),init.gen,wts=wts,data=data)
+  init.m<-lapply(init,"[[",2)
+  init.dta<-lapply(init,"[[",1)
+  mt.list<-mapply(ett,init.m,init.dta,SIMPLIFY=FALSE)
+  mt.final<-lapply(mt.list, '[[', 5)
+  list.idx<-mapply(md.varsel,mt.final,init.dta,SIMPLIFY=FALSE)
+  mapply(function(x,data1){match(names(data1[,x+1]),
+                                               names(data[,-1]))}
+         ,list.idx,data1=init.dta,SIMPLIFY=FALSE)
 }
 
 data<-datapr("expression",62,4,0.00003)
 wts<-w.initial(formula,data)
-nrep<-20
+nrep<-2
 var.columns<-2:(ncol(data))
 mvars<-ceiling((ncol(data)-1)/5)
 
-t<-lapply(1:nrep,var.sel,wts=wts,data=data)
+t<-var.sel(data,wts)
 
 tt<-unique(unlist(t))
 sim.out<-rfsrc(formula,data[,c(1,tt+1)])
